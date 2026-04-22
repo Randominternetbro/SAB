@@ -1,0 +1,174 @@
+-- Servicios
+local TeleportService = game:GetService("TeleportService")
+local Players = game:GetService("Players")
+
+-- CONFIG
+local autoJoin = false
+local minGen = 0
+
+-- CACHE (IMPORTANTE)
+local lastData = {
+    name = nil,
+    gen = nil,
+    jobId = nil
+}
+
+local usedJobs = {}
+
+-- UI
+local gui = Instance.new("ScreenGui", game.CoreGui)
+gui.Name = "BrainrotPro"
+
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.new(0, 400, 0, 480)
+frame.Position = UDim2.new(0.1,0,0.1,0)
+frame.BackgroundColor3 = Color3.fromRGB(15,15,15)
+frame.Active = true
+frame.Draggable = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
+
+-- Título
+local title = Instance.new("TextLabel", frame)
+title.Size = UDim2.new(1,0,0,40)
+title.Text = "🧠 Brainrot Finder PRO"
+title.TextColor3 = Color3.new(1,1,1)
+title.BackgroundTransparency = 1
+title.TextScaled = true
+
+-- Scroll
+local scroll = Instance.new("ScrollingFrame", frame)
+scroll.Position = UDim2.new(0,0,0,40)
+scroll.Size = UDim2.new(1,0,1,-110)
+scroll.BackgroundTransparency = 1
+
+local layout = Instance.new("UIListLayout", scroll)
+layout.Padding = UDim.new(0,6)
+
+layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y)
+end)
+
+-- AutoJoin botón
+local autoBtn = Instance.new("TextButton", frame)
+autoBtn.Position = UDim2.new(0,10,1,-60)
+autoBtn.Size = UDim2.new(0.5,-15,0,30)
+autoBtn.Text = "AutoJoin: OFF"
+autoBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+autoBtn.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", autoBtn)
+
+autoBtn.MouseButton1Click:Connect(function()
+    autoJoin = not autoJoin
+    autoBtn.Text = "AutoJoin: " .. (autoJoin and "ON" or "OFF")
+end)
+
+-- Input mínimo GEN
+local genBox = Instance.new("TextBox", frame)
+genBox.Position = UDim2.new(0.5,5,1,-60)
+genBox.Size = UDim2.new(0.5,-15,0,30)
+genBox.PlaceholderText = "Min GEN"
+genBox.BackgroundColor3 = Color3.fromRGB(40,40,40)
+genBox.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", genBox)
+
+genBox.FocusLost:Connect(function()
+    local num = tonumber(genBox.Text)
+    if num then
+        minGen = num
+    end
+end)
+
+-- CREAR CARD
+local function addEntry(name, gen, jobId)
+    if usedJobs[jobId] then return end
+    usedJobs[jobId] = true
+
+    local card = Instance.new("TextButton", scroll)
+    card.Size = UDim2.new(1,-10,0,70)
+    card.BackgroundColor3 = Color3.fromRGB(25,25,25)
+    card.Text = ""
+    Instance.new("UICorner", card)
+
+    local txt = Instance.new("TextLabel", card)
+    txt.Size = UDim2.new(1,-10,1,0)
+    txt.Position = UDim2.new(0,10,0,0)
+    txt.BackgroundTransparency = 1
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.TextScaled = true
+    txt.TextColor3 = Color3.new(1,1,1)
+
+    txt.Text = "🧠 "..name.."\n💰 "..gen.." /s\n🆔 "..jobId
+
+    -- JOIN CLICK
+    card.MouseButton1Click:Connect(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Players.LocalPlayer)
+    end)
+
+    -- AUTOJOIN
+    if autoJoin and gen >= minGen then
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Players.LocalPlayer)
+    end
+end
+
+-- PROCESADOR INTELIGENTE
+local function process(msg)
+    if not msg then return end
+
+    -- Nombre (Rexzy log)
+    local name = string.match(msg, "Log:%s(.+)%s%|")
+    if name then
+        lastData.name = name
+    end
+
+    -- Nombre alterno
+    local name2 = string.match(msg, "%|%s([^|]+)%s%(")
+    if name2 then
+        lastData.name = name2
+    end
+
+    -- GEN
+    local gen = string.match(msg, "genNum:%s(%d+)")
+             or string.match(msg, "Gen:%s(%d+)")
+    if gen then
+        lastData.gen = tonumber(gen)
+    end
+
+    -- JOB ID (CLAVE)
+    local jobId = string.match(msg, "Job:%s([%w%-]+)")
+    if jobId then
+        lastData.jobId = jobId
+    end
+
+    -- SI YA TENEMOS TODO → CREAR ENTRY
+    if lastData.name and lastData.gen and lastData.jobId then
+        addEntry(lastData.name, lastData.gen, lastData.jobId)
+
+        -- reset parcial (para siguiente)
+        lastData = {
+            name = nil,
+            gen = nil,
+            jobId = nil
+        }
+    end
+end
+
+-- HOOKS (CLAVE REAL)
+local oldPrint
+oldPrint = hookfunction(print, function(...)
+    process(table.concat({...}," "))
+    return oldPrint(...)
+end)
+
+local oldWarn
+oldWarn = hookfunction(warn, function(...)
+    process(table.concat({...}," "))
+    return oldWarn(...)
+end)
+
+if rconsoleprint then
+    local old = rconsoleprint
+    rconsoleprint = function(msg)
+        process(msg)
+        return old(msg)
+    end
+end
