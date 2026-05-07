@@ -1,46 +1,43 @@
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
-local function ultraInstantKillAndRespawn()
+local function softRespawn()
     local char = player.Character
     if not char then return end
     
-    -- 1. MUERTE FÍSICA INSTANTÁNEA (Bypass de Animación)
-    -- Rompemos el cuello directamente. Esto mata al personaje en 1 milisegundo.
-    local head = char:FindFirstChild("Head")
-    if head then
-        local neck = head:FindFirstChild("Neck") or char:FindFirstChild("Neck", true)
-        if neck then 
-            neck:Destroy() 
-        end
-    end
-    char:BreakJoints() -- Asegura la muerte en el servidor
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
     
-    -- 2. BYPASS DE FÍSICA (Evita lag de caída)
-    -- Mandamos el personaje al vacío absoluto para que el motor no calcule colisiones de muerte.
-    pcall(function()
-        char:SetPrimaryPartCFrame(CFrame.new(0, -99999, 0))
-    end)
-    
-    -- Limpieza local inmediata
-    task.wait(0.02)
-    char:Destroy()
-    player.Character = nil
-    
-    -- 3. BYPASS DE TIEMPO (Disparador de Remotos de Reaparición)
-    -- Escaneamos el juego en busca de botones de "Spawn" o "Deploy" invisibles para activarlos.
-    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            local name = v.Name:lower()
-            if name:find("spawn") or name:find("respawn") or name:find("deploy") or name:find("loadchar") or name:find("play") then
-                pcall(function()
-                    v:FireServer()
-                end)
+    if hrp and humanoid then
+        -- 1. Buscamos un SpawnLocation válido en el mapa
+        local spawnPoint = nil
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("SpawnLocation") and obj.Enabled then
+                spawnPoint = obj
+                break
             end
+        end
+        
+        -- 2. Si lo encontramos, nos teletransportamos ahí arriba
+        if spawnPoint then
+            -- Detenemos por completo la física del personaje para que no salga volando
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            
+            -- Teletransporte instantáneo usando PivotTo (método moderno de Roblox)
+            char:PivotTo(spawnPoint.CFrame + Vector3.new(0, 4, 0))
+            
+            -- Intentamos curar al personaje localmente (puede ser visual según el juego)
+            humanoid.Health = humanoid.MaxHealth
+            
+            -- Resetear estados físicos por si estabas cayendo o tropezando
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            
+            print("[+] Falso Respawn completado. Teletransportado al Spawn sin morir.")
+        else
+            warn("[-] No se encontró un SpawnLocation en el juego.")
         end
     end
 end
 
--- Ejecutar
-ultraInstantKillAndRespawn()
+softRespawn()
