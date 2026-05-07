@@ -1,31 +1,46 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
-local function ultraFastRespawn()
-    local character = player.Character
-    if not character then return end
-
-    -- 1. Eliminamos el personaje actual del mundo físico de inmediato
-    -- Esto evita animaciones de muerte y espera de física
-    character:SetPrimaryPartCFrame(CFrame.new(0, -500, 0)) -- Lo enviamos al vacío
+local function ultraInstantKillAndRespawn()
+    local char = player.Character
+    if not char then return end
     
-    task.wait() -- Espera mínima de un frame
-
-    -- 2. Bypass de estado: Forzamos al servidor a pensar que el personaje ya no existe
-    character:Destroy()
-    player.Character = nil
-
-    -- 3. Solicitud de carga forzada (Solo funciona si el juego permite LoadCharacter manual 
-    -- o si el exploit tiene permisos de elevación sobre el RemoteEvent de Spawn)
-    -- Si el juego es estándar, esto activará el ciclo de spawn más rápido posible.
+    -- 1. MUERTE FÍSICA INSTANTÁNEA (Bypass de Animación)
+    -- Rompemos el cuello directamente. Esto mata al personaje en 1 milisegundo.
+    local head = char:FindFirstChild("Head")
+    if head then
+        local neck = head:FindFirstChild("Neck") or char:FindFirstChild("Neck", true)
+        if neck then 
+            neck:Destroy() 
+        end
+    end
+    char:BreakJoints() -- Asegura la muerte en el servidor
     
-    -- Intentamos llamar al evento de carga nativo si está expuesto
+    -- 2. BYPASS DE FÍSICA (Evita lag de caída)
+    -- Mandamos el personaje al vacío absoluto para que el motor no calcule colisiones de muerte.
     pcall(function()
-        player:LoadCharacter()
+        char:SetPrimaryPartCFrame(CFrame.new(0, -99999, 0))
     end)
-
-    print("[!] Intento de reaparición ultra rápida completado.")
+    
+    -- Limpieza local inmediata
+    task.wait(0.02)
+    char:Destroy()
+    player.Character = nil
+    
+    -- 3. BYPASS DE TIEMPO (Disparador de Remotos de Reaparición)
+    -- Escaneamos el juego en busca de botones de "Spawn" o "Deploy" invisibles para activarlos.
+    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+        if v:IsA("RemoteEvent") then
+            local name = v.Name:lower()
+            if name:find("spawn") or name:find("respawn") or name:find("deploy") or name:find("loadchar") or name:find("play") then
+                pcall(function()
+                    v:FireServer()
+                end)
+            end
+        end
+    end
 end
 
--- Ejecución
-ultraFastRespawn()
+-- Ejecutar
+ultraInstantKillAndRespawn()
