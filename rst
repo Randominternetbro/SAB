@@ -1,38 +1,31 @@
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
-local function instantRespawn()
-    local char = player.Character
+local function ultraFastRespawn()
+    local character = player.Character
+    if not character then return end
+
+    -- 1. Eliminamos el personaje actual del mundo físico de inmediato
+    -- Esto evita animaciones de muerte y espera de física
+    character:SetPrimaryPartCFrame(CFrame.new(0, -500, 0)) -- Lo enviamos al vacío
     
-    if char then
-        -- 1. Destruimos tu personaje original instantáneamente sin esperas
-        char:Destroy()
-    end
+    task.wait() -- Espera mínima de un frame
+
+    -- 2. Bypass de estado: Forzamos al servidor a pensar que el personaje ya no existe
+    character:Destroy()
+    player.Character = nil
+
+    -- 3. Solicitud de carga forzada (Solo funciona si el juego permite LoadCharacter manual 
+    -- o si el exploit tiene permisos de elevación sobre el RemoteEvent de Spawn)
+    -- Si el juego es estándar, esto activará el ciclo de spawn más rápido posible.
     
-    -- 2. Creamos un modelo falso (Dummy) para engañar al motor del juego
-    local dummy = Instance.new("Model")
-    dummy.Name = player.Name
-    
-    local hum = Instance.new("Humanoid")
-    hum.Parent = dummy
-    
-    -- 3. Lo metemos al Workspace y le decimos al juego que este es tu nuevo personaje
-    dummy.Parent = workspace
-    player.Character = dummy
-    
-    -- 4. Matamos al falso instantáneamente
-    hum.Health = 0
-    
-    -- 5. Limpiamos la basura casi al instante para forzar el LoadCharacter del servidor
-    task.delay(0.05, function()
-        if dummy then
-            dummy:Destroy()
-            player.Character = nil
-        end
+    -- Intentamos llamar al evento de carga nativo si está expuesto
+    pcall(function()
+        player:LoadCharacter()
     end)
-    
-    print("[+] Respawn instantáneo forzado mediante Dummy Bypass.")
+
+    print("[!] Intento de reaparición ultra rápida completado.")
 end
 
--- Ejecutar una vez
-instantRespawn()
+-- Ejecución
+ultraFastRespawn()
