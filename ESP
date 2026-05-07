@@ -1,0 +1,234 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Packages = ReplicatedStorage:WaitForChild("Packages")
+local Datas = ReplicatedStorage:WaitForChild("Datas")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+
+local Synchronizer = require(Packages:WaitForChild("Synchronizer"))
+local AnimalsData = require(Datas:WaitForChild("Animals"))
+local AnimalsShared = require(Shared:WaitForChild("Animals"))
+
+local activeESPs = {}
+local lastTop1UID = nil
+
+-- Función para determinar el color basado en el dinero
+local function getColorData(value)
+    if value < 1000000 then
+        return Color3.fromRGB(150, 150, 150), false -- Gris -1M
+    elseif value >= 1000000 and value <= 40000000 then
+        return Color3.fromRGB(0, 150, 255), false -- Azul 1M-40M
+    elseif value >= 41000000 and value <= 222000000 then
+        return Color3.fromRGB(255, 255, 0), false -- Amarillo 41M-222M
+    elseif value >= 223000000 and value <= 500000000 then
+        return Color3.fromRGB(255, 0, 0), false -- Rojo 223M-500M
+    else
+        return Color3.fromRGB(255, 255, 255), true -- Rainbow +501M
+    end
+end
+
+-- Función para la notificación con desvanecimiento de 3 segundos
+local function showNotification(brainrotName, genValue)
+    local baseColor, isRainbow = getColorData(genValue)
+    
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "MejorBrainrotNotif"
+    sg.ResetOnSpawn = false
+    -- Intentar ponerlo en CoreGui para que no se borre, si el exploit lo permite
+    local success = pcall(function() sg.Parent = CoreGui end)
+    if not success then sg.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    local frame = Instance.new("Frame", sg)
+    frame.Size = UDim2.new(0, 300, 0, 60)
+    frame.Position = UDim2.new(0.5, -150, 0, 50)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    frame.BackgroundTransparency = 0
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Thickness = 2
+    stroke.Color = baseColor
+
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, 0, 0.5, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "🌟 ¡MEJOR BRAINROT ENCONTRADO! 🌟"
+    title.Font = Enum.Font.GothamBlack
+    title.TextSize = 12
+    title.TextColor3 = Color3.new(1, 1, 1)
+
+    local info = Instance.new("TextLabel", frame)
+    info.Size = UDim2.new(1, 0, 0.5, 0)
+    info.Position = UDim2.new(0, 0, 0.5, 0)
+    info.BackgroundTransparency = 1
+    info.Text = brainrotName .. " - $" .. tostring(math.floor(genValue)) .. "/s"
+    info.Font = Enum.Font.GothamBold
+    info.TextSize = 14
+    info.TextColor3 = baseColor
+
+    local rbConnection
+    if isRainbow then
+        rbConnection = RunService.RenderStepped:Connect(function()
+            if frame.Parent then
+                local rbColor = Color3.fromHSV(tick() % 3 / 3, 1, 1)
+                info.TextColor3 = rbColor
+                stroke.Color = rbColor
+            else
+                rbConnection:Disconnect()
+            end
+        end)
+    end
+
+    -- Efecto de desvanecimiento tras 3 segundos
+    task.delay(3, function()
+        local tweenInfo = TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(frame, tweenInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(stroke, tweenInfo, {Transparency = 1}):Play()
+        TweenService:Create(title, tweenInfo, {TextTransparency = 1}):Play()
+        local lastTween = TweenService:Create(info, tweenInfo, {TextTransparency = 1})
+        lastTween:Play()
+        
+        lastTween.Completed:Wait()
+        sg:Destroy()
+    end)
+end
+
+-- Función principal para obtener los pets y crear el ESP
+local function updateBrainrotESP()
+    local allPets = {}
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then return end
+
+    -- Escanear todos los plots para obtener la lista de animales
+    for _, plot in ipairs(plots:GetChildren()) do
+        pcall(function()
+            local channel = Synchronizer:Get(plot.Name)
+            if channel then
+                local animalList = channel:Get("AnimalList")
+                if animalList then
+                    for slot, ad in pairs(animalList) do
+                        if type(ad) == "table" then
+                            local aName = ad.Index
+                            local aInfo = AnimalsData[aName]
+                            if aInfo then
+                                local genValue = AnimalsShared:GetGeneration(aName, ad.Mutation, ad.Traits, nil)
+                                table.insert(allPets, {
+                                    name = aInfo.DisplayName or aName,
+                                    genValue = genValue,
+                                    plotName = plot.Name,
+                                    slot = tostring(slot),
+                                    uid = plot.Name .. "_" .. tostring(slot)
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Ordenar del de mayor a menor valor
+    table.sort(allPets, function(a, b) return a.genValue > b.genValue end)
+
+    -- Filtrar solo los 5 mejores
+    local top5 = {}
+    for i = 1, math.min(5, #allPets) do
+        table.insert(top5, allPets[i])
+    end
+
+    -- Verificar si el #1 cambió para lanzar la notificación
+    if #top5 > 0 then
+        local bestPet = top5[1]
+        if lastTop1UID ~= bestPet.uid then
+            lastTop1UID = bestPet.uid
+            showNotification(bestPet.name, bestPet.genValue)
+        end
+    end
+
+    -- Actualizar el ESP Permanente
+    local newActiveESPs = {}
+    for rank, pet in ipairs(top5) do
+        local plotFolder = plots:FindFirstChild(pet.plotName)
+        if plotFolder then
+            local podiums = plotFolder:FindFirstChild("AnimalPodiums")
+            if podiums then
+                local podium = podiums:FindFirstChild(pet.slot)
+                local spawnPart = podium and podium:FindFirstChild("Base") and podium.Base:FindFirstChild("Spawn")
+                
+                if spawnPart then
+                    newActiveESPs[pet.uid] = true
+                    
+                    if not activeESPs[pet.uid] then
+                        -- Crear nuevo ESP
+                        local espColor, isRb = getColorData(pet.genValue)
+                        
+                        local bb = Instance.new("BillboardGui", spawnPart)
+                        bb.Name = "BrainrotESP_" .. pet.uid
+                        bb.Size = UDim2.new(0, 150, 0, 40)
+                        bb.StudsOffset = Vector3.new(0, 3, 0)
+                        bb.AlwaysOnTop = true
+                        
+                        local textLabel = Instance.new("TextLabel", bb)
+                        textLabel.Size = UDim2.new(1, 0, 1, 0)
+                        textLabel.BackgroundTransparency = 1
+                        textLabel.Text = "#" .. rank .. " " .. pet.name .. "\n$" .. tostring(math.floor(pet.genValue))
+                        textLabel.Font = Enum.Font.GothamBlack
+                        textLabel.TextSize = 14
+                        textLabel.TextColor3 = espColor
+                        textLabel.TextStrokeTransparency = 0
+                        
+                        local hl = Instance.new("Highlight", spawnPart)
+                        hl.Name = "BrainrotHL_" .. pet.uid
+                        hl.FillColor = espColor
+                        hl.OutlineColor = Color3.new(1,1,1)
+                        hl.FillTransparency = 0.5
+                        
+                        if isRb then
+                            task.spawn(function()
+                                while bb.Parent and hl.Parent do
+                                    local rb = Color3.fromHSV(tick() % 3 / 3, 1, 1)
+                                    textLabel.TextColor3 = rb
+                                    hl.FillColor = rb
+                                    task.wait()
+                                end
+                            end)
+                        end
+                        
+                        activeESPs[pet.uid] = {Billboard = bb, Highlight = hl}
+                    else
+                        -- Actualizar texto del ESP existente
+                        local esp = activeESPs[pet.uid]
+                        if esp.Billboard and esp.Billboard:FindFirstChildOfClass("TextLabel") then
+                            esp.Billboard:FindFirstChildOfClass("TextLabel").Text = "#" .. rank .. " " .. pet.name .. "\n$" .. tostring(math.floor(pet.genValue))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Limpiar ESPs viejos que ya no están en el Top 5
+    for uid, espData in pairs(activeESPs) do
+        if not newActiveESPs[uid] then
+            if type(espData) == "table" then
+                if espData.Billboard then espData.Billboard:Destroy() end
+                if espData.Highlight then espData.Highlight:Destroy() end
+            end
+            activeESPs[uid] = nil
+        end
+    end
+end
+
+-- Bucle permanente para el ESP
+task.spawn(function()
+    while true do
+        updateBrainrotESP()
+        task.wait(1) -- Actualiza la información cada segundo para no causar lag
+    end
+end)
