@@ -8,7 +8,7 @@ local Config = {
     },
     Boton2 = {
         Nombre = "KORE RIKA! (5M)", -- Nombre que aparecerá en el botón 2
-        URL = "https://raw.githubusercontent.com/brunoclazaro2010/BullysHubV4/refs/heads/main/script.lua" -- URL del script 2
+        URL = "https://raw.githubusercontent.com/Randominternetbro/stabrt/refs/heads/main/Icev2" -- URL del script 2
     }
 }
 -- ==========================================
