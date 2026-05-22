@@ -1,0 +1,163 @@
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local targetPlaceId = 109983668079237 -- El ID que solicitaste
+local configName = "BerUI_Position.json"
+
+-- Función para cargar la posición guardada
+local function loadPosition()
+    if isfile and isfile(configName) then
+        local success, data = pcall(function()
+            return HttpService:JSONDecode(readfile(configName))
+        end)
+        if success and data and data.X and data.Y then
+            return UDim2.new(0, data.X, 0, data.Y)
+        end
+    end
+    -- Posición por defecto si no hay archivo (centro de la pantalla)
+    return UDim2.new(0.5, -75, 0.5, -50)
+end
+
+-- Función para guardar la posición actual
+local function savePosition(pos)
+    if writefile then
+        local data = {
+            X = pos.X.Offset,
+            Y = pos.Y.Offset
+        }
+        writefile(configName, HttpService:JSONEncode(data))
+    end
+end
+
+-- Limpiar interfaz anterior si existe para evitar duplicados al re-ejecutar
+for _, gui in ipairs(CoreGui:GetChildren()) do
+    if gui.Name == "BluePanelGUI" then
+        gui:Destroy()
+    end
+end
+
+-- Crear GUI Principal
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BluePanelGUI"
+-- Soporte para diferentes ejecutadores (proteger la UI)
+if gethui then
+    ScreenGui.Parent = gethui()
+elseif syn and syn.protect_gui then
+    syn.protect_gui(ScreenGui)
+    ScreenGui.Parent = CoreGui
+else
+    ScreenGui.Parent = CoreGui
+end
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 150, 0, 110)
+MainFrame.Position = loadPosition()
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 90, 180) -- Azul oscuro/agradable
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 25)
+Title.BackgroundTransparency = 1
+Title.Text = "Panel"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.Parent = MainFrame
+
+-- Botón 1: Server Hop
+local HopButton = Instance.new("TextButton")
+HopButton.Size = UDim2.new(0, 130, 0, 30)
+HopButton.Position = UDim2.new(0, 10, 0, 30)
+HopButton.BackgroundColor3 = Color3.fromRGB(40, 130, 255)
+HopButton.Text = "Server Hop"
+HopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+HopButton.Font = Enum.Font.GothamSemibold
+HopButton.TextSize = 13
+HopButton.Parent = MainFrame
+
+local HopCorner = Instance.new("UICorner")
+HopCorner.CornerRadius = UDim.new(0, 6)
+HopCorner.Parent = HopButton
+
+-- Botón 2: Rejoin
+local RejoinButton = Instance.new("TextButton")
+RejoinButton.Size = UDim2.new(0, 130, 0, 30)
+RejoinButton.Position = UDim2.new(0, 10, 0, 70)
+RejoinButton.BackgroundColor3 = Color3.fromRGB(40, 130, 255)
+RejoinButton.Text = "Rejoin Server"
+RejoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+RejoinButton.Font = Enum.Font.GothamSemibold
+RejoinButton.TextSize = 13
+RejoinButton.Parent = MainFrame
+
+local RejoinCorner = Instance.new("UICorner")
+RejoinCorner.CornerRadius = UDim.new(0, 6)
+RejoinCorner.Parent = RejoinButton
+
+-- Lógica de Arrastre (Dragging) y Guardado de Posición
+local dragging = false
+local dragInput, mousePos, framePos
+
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        mousePos = input.Position
+        framePos = MainFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+                -- Guardar la posición cuando se suelta el clic
+                savePosition(MainFrame.Position)
+            end
+        end)
+    end
+end)
+
+MainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - mousePos
+        MainFrame.Position = UDim2.new(
+            framePos.X.Scale, 
+            framePos.X.Offset + delta.X, 
+            framePos.Y.Scale, 
+            framePos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- Lógica de los Botones
+HopButton.MouseButton1Click:Connect(function()
+    HopButton.Text = "Teleporting..."
+    -- Teletransporta al PlaceID específico
+    TeleportService:Teleport(targetPlaceId, LocalPlayer)
+end)
+
+RejoinButton.MouseButton1Click:Connect(function()
+    RejoinButton.Text = "Rejoining..."
+    -- Vuelve a unirse al JobId (servidor exacto) del juego actual
+    if #Players:GetPlayers() <= 1 then
+        -- Si eres el único, TeleportToPlaceInstance puede fallar, así que hace un rejoin general
+        LocalPlayer:Kick("Rejoining...")
+        task.wait()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    else
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+    end
+end)
