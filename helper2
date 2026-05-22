@@ -1,7 +1,7 @@
 -- Obtenemos la función de teletransporte compatible con tu ejecutador
 local queue_on_teleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
 
-local ScriptBase = [[
+local ScriptCode = [[
 local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
@@ -12,7 +12,7 @@ local LocalPlayer = Players.LocalPlayer
 local targetPlaceId = 109983668079237 
 local configName = "BerUI_Position.json"
 
--- Función para cargar la posición guardada
+-- Función para cargar la posición guardada (Intacta)
 local function loadPosition()
     if isfile and isfile(configName) then
         local success, data = pcall(function()
@@ -25,7 +25,7 @@ local function loadPosition()
     return UDim2.new(0.5, -75, 0.5, -50)
 end
 
--- Función para guardar la posición actual
+-- Función para guardar la posición actual (Intacta)
 local function savePosition(pos)
     if writefile then
         local data = {
@@ -38,14 +38,15 @@ end
 
 -- Limpiar interfaz anterior si existe
 for _, gui in ipairs(CoreGui:GetChildren()) do
-    if gui.Name == "BluePanelGUI" then
+    if gui.Name == "VexisPanelGUI" then
         gui:Destroy()
     end
 end
 
--- Crear GUI Principal
+-- Crear GUI Principal (Estilo Moderno/Modular)
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BluePanelGUI"
+ScreenGui.Name = "VexisPanelGUI"
+ScreenGui.ResetOnSpawn = false
 
 if gethui then
     ScreenGui.Parent = gethui()
@@ -57,57 +58,93 @@ else
 end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 150, 0, 110)
+MainFrame.Size = UDim2.new(0, 160, 0, 125)
 MainFrame.Position = loadPosition()
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 90, 180)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25) -- Fondo oscuro
+MainFrame.BackgroundTransparency = 0.15 -- Ligera transparencia moderna
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
 
 local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.CornerRadius = UDim.new(0, 10)
 UICorner.Parent = MainFrame
 
+-- Delineado azul para el panel principal
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(40, 130, 255)
+UIStroke.Thickness = 1.5
+UIStroke.Parent = MainFrame
+
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 25)
+Title.Size = UDim2.new(1, 0, 0, 30)
 Title.BackgroundTransparency = 1
-Title.Text = "Panel"
+Title.Text = "  Vexis Panel"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 14
+Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = MainFrame
+
+-- Línea separadora
+local Separator = Instance.new("Frame")
+Separator.Size = UDim2.new(1, -20, 0, 1)
+Separator.Position = UDim2.new(0, 10, 0, 30)
+Separator.BackgroundColor3 = Color3.fromRGB(40, 130, 255)
+Separator.BorderSizePixel = 0
+Separator.Parent = MainFrame
 
 -- Botón 1: Server Hop
 local HopButton = Instance.new("TextButton")
-HopButton.Size = UDim2.new(0, 130, 0, 30)
-HopButton.Position = UDim2.new(0, 10, 0, 30)
-HopButton.BackgroundColor3 = Color3.fromRGB(40, 130, 255)
+HopButton.Size = UDim2.new(1, -20, 0, 32)
+HopButton.Position = UDim2.new(0, 10, 0, 40)
+HopButton.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+HopButton.BackgroundTransparency = 0.2
 HopButton.Text = "Server Hop"
-HopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+HopButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 HopButton.Font = Enum.Font.GothamSemibold
 HopButton.TextSize = 13
+HopButton.AutoButtonColor = true
 HopButton.Parent = MainFrame
 
 local HopCorner = Instance.new("UICorner")
 HopCorner.CornerRadius = UDim.new(0, 6)
 HopCorner.Parent = HopButton
 
+local HopStroke = Instance.new("UIStroke")
+HopStroke.Color = Color3.fromRGB(50, 50, 60)
+HopStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+HopStroke.Parent = HopButton
+
 -- Botón 2: Rejoin
 local RejoinButton = Instance.new("TextButton")
-RejoinButton.Size = UDim2.new(0, 130, 0, 30)
-RejoinButton.Position = UDim2.new(0, 10, 0, 70)
-RejoinButton.BackgroundColor3 = Color3.fromRGB(40, 130, 255)
+RejoinButton.Size = UDim2.new(1, -20, 0, 32)
+RejoinButton.Position = UDim2.new(0, 10, 0, 80)
+RejoinButton.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+RejoinButton.BackgroundTransparency = 0.2
 RejoinButton.Text = "Rejoin Server"
-RejoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+RejoinButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 RejoinButton.Font = Enum.Font.GothamSemibold
 RejoinButton.TextSize = 13
+RejoinButton.AutoButtonColor = true
 RejoinButton.Parent = MainFrame
 
 local RejoinCorner = Instance.new("UICorner")
 RejoinCorner.CornerRadius = UDim.new(0, 6)
 RejoinCorner.Parent = RejoinButton
 
--- Lógica de Arrastre (Dragging)
+local RejoinStroke = Instance.new("UIStroke")
+RejoinStroke.Color = Color3.fromRGB(50, 50, 60)
+RejoinStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+RejoinStroke.Parent = RejoinButton
+
+-- Efectos Hover (Ilumina el borde de los botones al pasar el mouse)
+HopButton.MouseEnter:Connect(function() HopStroke.Color = Color3.fromRGB(40, 130, 255) end)
+HopButton.MouseLeave:Connect(function() HopStroke.Color = Color3.fromRGB(50, 50, 60) end)
+RejoinButton.MouseEnter:Connect(function() RejoinStroke.Color = Color3.fromRGB(40, 130, 255) end)
+RejoinButton.MouseLeave:Connect(function() RejoinStroke.Color = Color3.fromRGB(50, 50, 60) end)
+
+-- Lógica de Arrastre (Dragging) y Guardado de Posición (Intacta)
 local dragging = false
 local dragInput, mousePos, framePos
 
@@ -144,7 +181,7 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Lógica de los Botones
+-- Lógica de los Botones (Intacta)
 HopButton.MouseButton1Click:Connect(function()
     HopButton.Text = "Teleporting..."
     TeleportService:Teleport(targetPlaceId, LocalPlayer)
@@ -162,10 +199,14 @@ RejoinButton.MouseButton1Click:Connect(function()
 end)
 ]]
 
--- Le decimos al ejecutador que vuelva a ejecutar el script después de teletransportarnos
-if queue_on_teleport then
-    queue_on_teleport(ScriptBase)
-end
+-- 1. Ejecutamos la interfaz inmediatamente de forma normal
+loadstring(ScriptCode)()
 
--- Ejecutamos la interfaz la primera vez que pegas el script
-loadstring(ScriptBase)()
+-- 2. Detectamos el momento exacto en que Roblox inicia el teletransporte para volver a inyectarlo
+if queue_on_teleport then
+    game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
+        if teleportState == Enum.TeleportState.Started then
+            queue_on_teleport(ScriptCode)
+        end
+    end)
+end
