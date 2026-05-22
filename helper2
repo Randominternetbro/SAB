@@ -43,7 +43,7 @@ for _, gui in ipairs(CoreGui:GetChildren()) do
     end
 end
 
--- Crear GUI Principal (Estilo Moderno/Modular)
+-- Crear GUI Principal
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "VexisPanelGUI"
 ScreenGui.ResetOnSpawn = false
@@ -60,8 +60,8 @@ end
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 160, 0, 125)
 MainFrame.Position = loadPosition()
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25) -- Fondo oscuro
-MainFrame.BackgroundTransparency = 0.15 -- Ligera transparencia moderna
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BackgroundTransparency = 0.15
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
@@ -70,7 +70,6 @@ local UICorner = Instance.new("UICorner")
 UICorner.CornerRadius = UDim.new(0, 10)
 UICorner.Parent = MainFrame
 
--- Delineado azul para el panel principal
 local UIStroke = Instance.new("UIStroke")
 UIStroke.Color = Color3.fromRGB(40, 130, 255)
 UIStroke.Thickness = 1.5
@@ -86,7 +85,6 @@ Title.TextSize = 14
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = MainFrame
 
--- Línea separadora
 local Separator = Instance.new("Frame")
 Separator.Size = UDim2.new(1, -20, 0, 1)
 Separator.Position = UDim2.new(0, 10, 0, 30)
@@ -138,7 +136,6 @@ RejoinStroke.Color = Color3.fromRGB(50, 50, 60)
 RejoinStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 RejoinStroke.Parent = RejoinButton
 
--- Efectos Hover (Ilumina el borde de los botones al pasar el mouse)
 HopButton.MouseEnter:Connect(function() HopStroke.Color = Color3.fromRGB(40, 130, 255) end)
 HopButton.MouseLeave:Connect(function() HopStroke.Color = Color3.fromRGB(50, 50, 60) end)
 RejoinButton.MouseEnter:Connect(function() RejoinStroke.Color = Color3.fromRGB(40, 130, 255) end)
@@ -181,12 +178,87 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Lógica de los Botones (Intacta)
+-- NUEVA LÓGICA DE SERVER HOP (Filtrado de servidores inteligente)
 HopButton.MouseButton1Click:Connect(function()
-    HopButton.Text = "Teleporting..."
-    TeleportService:Teleport(targetPlaceId, LocalPlayer)
+    HopButton.Text = "Searching..."
+    
+    task.spawn(function()
+        local historyFile = "BerUI_HopHistory.json"
+        local history = {}
+        
+        -- Cargar historial de servidores visitados
+        if isfile and isfile(historyFile) then
+            pcall(function()
+                history = HttpService:JSONDecode(readfile(historyFile))
+            end)
+        end
+        if type(history) ~= "table" then history = {} end
+        
+        -- Añadir el servidor actual al historial si no está registrado
+        if game.JobId and game.JobId ~= "" then
+            local exists = false
+            for _, id in ipairs(history) do
+                if id == game.JobId then exists = true break end
+            end
+            if not exists then
+                table.insert(history, game.JobId)
+                if #history > 6 then table.remove(history, 1) end -- Guarda registro de los últimos 6 servidores
+                if writefile then
+                    writefile(historyFile, HttpService:JSONEncode(history))
+                end
+            end
+        end
+        
+        -- Obtener servidores públicos activos del PlaceID
+        local success, serverListRaw = pcall(function()
+            return game:HttpGet("https://games.roblox.com/v1/games/" .. targetPlaceId .. "/servers/Public?sortOrder=Desc&limit=100")
+        end)
+        
+        if success and serverListRaw then
+            local decodeSuccess, serverList = pcall(function() return HttpService:JSONDecode(serverListRaw) end)
+            if decodeSuccess and serverList and serverList.data then
+                local validServers = {}
+                
+                for _, server in ipairs(serverList.data) do
+                    if server.id and server.playing and server.maxPlayers and server.playing < server.maxPlayers then
+                        -- Comprobar si el servidor está en el historial reciente
+                        local isRecent = false
+                        for _, oldId in ipairs(history) do
+                            if oldId == server.id then
+                                isRecent = true
+                                break
+                            end
+                        end
+                        if not isRecent then
+                            table.insert(validServers, server.id)
+                        end
+                    end
+                end
+                
+                -- Si hay servidores disponibles que no hemos visitado, ir a uno aleatorio
+                if #validServers > 0 then
+                    local chosenServer = validServers[math.random(1, #validServers)]
+                    
+                    table.insert(history, chosenServer)
+                    if #history > 6 then table.remove(history, 1) end
+                    if writefile then
+                        writefile(historyFile, HttpService:JSONEncode(history))
+                    end
+                    
+                    HopButton.Text = "Teleporting..."
+                    TeleportService:TeleportToPlaceInstance(targetPlaceId, chosenServer, LocalPlayer)
+                    return
+                end
+            end
+        end
+        
+        -- Fallback normal si la API falla o no hay servidores alternativos válidos
+        HopButton.Text = "Standard Hop..."
+        TeleportService:Teleport(targetPlaceId, LocalPlayer)
+    end)
 end)
 
+-- Lógica de Rejoin (Intacta)
 RejoinButton.MouseButton1Click:Connect(function()
     RejoinButton.Text = "Rejoining..."
     if #Players:GetPlayers() <= 1 then
@@ -199,10 +271,10 @@ RejoinButton.MouseButton1Click:Connect(function()
 end)
 ]]
 
--- 1. Ejecutamos la interfaz inmediatamente de forma normal
+-- 1. Ejecutamos de forma normal al inyectar
 loadstring(ScriptCode)()
 
--- 2. Detectamos el momento exacto en que Roblox inicia el teletransporte para volver a inyectarlo
+-- 2. Manejo automático del persistido en teletransportes
 if queue_on_teleport then
     game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
         if teleportState == Enum.TeleportState.Started then
