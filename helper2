@@ -1,3 +1,7 @@
+-- Obtenemos la función de teletransporte compatible con tu ejecutador
+local queue_on_teleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
+
+local ScriptBase = [[
 local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
@@ -5,7 +9,7 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
-local targetPlaceId = 109983668079237 -- El ID que solicitaste
+local targetPlaceId = 109983668079237 
 local configName = "BerUI_Position.json"
 
 -- Función para cargar la posición guardada
@@ -18,7 +22,6 @@ local function loadPosition()
             return UDim2.new(0, data.X, 0, data.Y)
         end
     end
-    -- Posición por defecto si no hay archivo (centro de la pantalla)
     return UDim2.new(0.5, -75, 0.5, -50)
 end
 
@@ -33,7 +36,7 @@ local function savePosition(pos)
     end
 end
 
--- Limpiar interfaz anterior si existe para evitar duplicados al re-ejecutar
+-- Limpiar interfaz anterior si existe
 for _, gui in ipairs(CoreGui:GetChildren()) do
     if gui.Name == "BluePanelGUI" then
         gui:Destroy()
@@ -43,7 +46,7 @@ end
 -- Crear GUI Principal
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BluePanelGUI"
--- Soporte para diferentes ejecutadores (proteger la UI)
+
 if gethui then
     ScreenGui.Parent = gethui()
 elseif syn and syn.protect_gui then
@@ -56,7 +59,7 @@ end
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 150, 0, 110)
 MainFrame.Position = loadPosition()
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 90, 180) -- Azul oscuro/agradable
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 90, 180)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
@@ -104,7 +107,7 @@ local RejoinCorner = Instance.new("UICorner")
 RejoinCorner.CornerRadius = UDim.new(0, 6)
 RejoinCorner.Parent = RejoinButton
 
--- Lógica de Arrastre (Dragging) y Guardado de Posición
+-- Lógica de Arrastre (Dragging)
 local dragging = false
 local dragInput, mousePos, framePos
 
@@ -117,7 +120,6 @@ MainFrame.InputBegan:Connect(function(input)
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 dragging = false
-                -- Guardar la posición cuando se suelta el clic
                 savePosition(MainFrame.Position)
             end
         end)
@@ -145,15 +147,12 @@ end)
 -- Lógica de los Botones
 HopButton.MouseButton1Click:Connect(function()
     HopButton.Text = "Teleporting..."
-    -- Teletransporta al PlaceID específico
     TeleportService:Teleport(targetPlaceId, LocalPlayer)
 end)
 
 RejoinButton.MouseButton1Click:Connect(function()
     RejoinButton.Text = "Rejoining..."
-    -- Vuelve a unirse al JobId (servidor exacto) del juego actual
     if #Players:GetPlayers() <= 1 then
-        -- Si eres el único, TeleportToPlaceInstance puede fallar, así que hace un rejoin general
         LocalPlayer:Kick("Rejoining...")
         task.wait()
         TeleportService:Teleport(game.PlaceId, LocalPlayer)
@@ -161,3 +160,12 @@ RejoinButton.MouseButton1Click:Connect(function()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
     end
 end)
+]]
+
+-- Le decimos al ejecutador que vuelva a ejecutar el script después de teletransportarnos
+if queue_on_teleport then
+    queue_on_teleport(ScriptBase)
+end
+
+-- Ejecutamos la interfaz la primera vez que pegas el script
+loadstring(ScriptBase)()
