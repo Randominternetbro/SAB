@@ -1,0 +1,818 @@
+-- ╔══════════════════════════════════════════════╗
+-- ║        NOTZ HUB  –  DESYNC V18.3 TIME FIXED              ║
+-- ║  BEHIND ROLLBACK  ·  6 STUDS (Slider 3-8s)  ║
+-- ║  + CÍRCULO VERMELHO NO CHÃO (DISCO GROSSO)   ║
+-- ╚══════════════════════════════════════════════╝
+
+repeat task.wait() until game:IsLoaded()
+
+local Players    = game:GetService("Players")
+local UIS        = game:GetService("UserInputService")
+local TweenSvc   = game:GetService("TweenService")
+local HttpSvc    = game:GetService("HttpService")
+local RunSvc     = game:GetService("RunService")
+local Workspace  = game:GetService("Workspace")
+local lp         = Players.LocalPlayer
+
+local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
+
+-- ════════════════════════════════════════════
+--  STATE
+-- ════════════════════════════════════════════
+local State = {
+    desync      = false,
+    stealing    = false,
+    timer       = 0,
+    isDelaying  = false,
+    enabled     = true,
+}
+
+local BEHIND_OFFSET  = 6
+local CYCLE_TIME     = 6.0        -- duração entre rollbacks (slider 3-8)
+local rollbackKey    = Enum.KeyCode.R
+local fakeServerPos  = nil
+local bindingMode    = false
+local mobileDesyncOk = false
+
+-- ════════════════════════════════════════════
+--  CONFIG
+-- ════════════════════════════════════════════
+local CFG_FILE = "NotzHub_V18_Config.json"
+local main
+
+local function SaveConfig()
+    pcall(function()
+        writefile(CFG_FILE, HttpSvc:JSONEncode({
+            X        = { Scale = main.Position.X.Scale, Offset = main.Position.X.Offset },
+            Y        = { Scale = main.Position.Y.Scale, Offset = main.Position.Y.Offset },
+            Key      = rollbackKey.Name,
+            CycleTime = CYCLE_TIME,
+        }))
+    end)
+end
+
+local function LoadConfig()
+    local defPos = UDim2.new(0.02, 0, 0.3, 0)
+    local defKey = Enum.KeyCode.R
+    local defCycle = 6.0
+    if isfile and isfile(CFG_FILE) then
+        local ok, d = pcall(function() return HttpSvc:JSONDecode(readfile(CFG_FILE)) end)
+        if ok and d then
+            local pos = UDim2.new(d.X.Scale, d.X.Offset, d.Y.Scale, d.Y.Offset)
+            local key = d.Key and (pcall(function() return Enum.KeyCode[d.Key] end)
+                        and Enum.KeyCode[d.Key]) or defKey
+            local cy  = tonumber(d.CycleTime) or defCycle
+            return pos, key, cy
+        end
+    end
+    return defPos, defKey, defCycle
+end
+
+local savedPos, savedKey, savedCycle = LoadConfig()
+rollbackKey = savedKey
+CYCLE_TIME  = math.clamp(savedCycle, 3, 8)
+
+-- ════════════════════════════════════════════
+--  ROLLBACK — VAI 6 STUDS PARA TRÁS
+-- ════════════════════════════════════════════
+local function SafeRollback()
+    local ok, err = pcall(function()
+        local char = lp.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local wasDesync = State.desync
+        State.desync = false
+        if mobileDesyncOk then pcall(function() raknet.desync(false) end) end
+
+        hrp.AssemblyLinearVelocity  = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+
+        local currentPos = hrp.Position
+        local currentCF  = hrp.CFrame
+
+        local backVec   = -currentCF.LookVector
+        local targetPos = Vector3.new(
+            currentPos.X + backVec.X * BEHIND_OFFSET,
+            currentPos.Y,
+            currentPos.Z + backVec.Z * BEHIND_OFFSET
+        )
+
+        hrp.CFrame = CFrame.new(targetPos, targetPos + currentCF.LookVector)
+        hrp.AssemblyLinearVelocity  = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+
+        fakeServerPos = targetPos
+
+        task.wait(0.06)
+
+        if wasDesync and lp:GetAttribute("Stealing") == true then
+            State.desync = true
+            if mobileDesyncOk then pcall(function() raknet.desync(true) end) end
+        end
+    end)
+    if not ok then
+        print("[NotzHub] Rollback falhou: " .. tostring(err))
+    end
+end
+
+-- ════════════════════════════════════════════
+--  HOOKS DE DESYNC (PC) – seguro
+-- ════════════════════════════════════════════
+task.spawn(function()
+    for _ = 1, 40 do
+        local ok = pcall(function()
+            if not raknet or not raknet.add_send_hook then error("nil") end
+            raknet.add_send_hook(function(packet)
+                pcall(function()
+                    if State.desync and State.enabled
+                       and packet.PacketId == 0x1B then
+                        local b = packet.AsBuffer
+                        if b then
+                            pcall(function()
+                                buffer.writeu32(b, 1, 0xFFFFFFFF)
+                                buffer.writeu32(b, 5, 0xFFFFFFFF)
+                                buffer.writeu32(b, 9, 0xFFFFFFFF)
+                                packet:SetData(b)
+                            end)
+                        end
+                    end
+                end)
+            end)
+            pcall(function()
+                raknet.add_recv_hook(function(packet)
+                    pcall(function()
+                        if State.desync and State.enabled then
+                            if packet.PacketId == 0x1B or packet.PacketId == 0x86
+                               or packet.PacketId == 0x21 then
+                                packet:Drop()
+                            end
+                        end
+                    end)
+                end)
+            end)
+        end)
+        if ok then return end
+        task.wait(0.5)
+    end
+end)
+
+pcall(function()
+    if raknet and raknet.desync then mobileDesyncOk = true end
+end)
+
+local function activateDesync()
+    State.desync   = true
+    State.stealing = true
+    if mobileDesyncOk then pcall(function() raknet.desync(true) end) end
+end
+
+local function deactivateDesync()
+    State.desync   = false
+    State.stealing = false
+    if mobileDesyncOk then pcall(function() raknet.desync(false) end) end
+end
+
+-- ════════════════════════════════════════════
+--  UI
+-- ════════════════════════════════════════════
+local RED        = Color3.fromRGB(185, 50, 50)
+local RED_BRIGHT = Color3.fromRGB(215, 75, 75)
+local WHITE_COLOR= Color3.fromRGB(235, 235, 240)
+local BG_DEEP    = Color3.fromRGB(12, 12, 14)
+local BG_CARD    = Color3.fromRGB(18, 18, 21)
+local BG_ITEM    = Color3.fromRGB(24, 24, 28)
+local GREEN_OK   = Color3.fromRGB(50, 185, 115)
+local WHITE      = Color3.fromRGB(215, 215, 220)
+local GRAY_DIM   = Color3.fromRGB(75, 75, 85)
+local GRAY_MID   = Color3.fromRGB(115, 115, 125)
+local BoldFont   = Enum.Font.GothamBold
+local Font       = Enum.Font.Gotham
+local BlackFont  = Enum.Font.GothamBlack
+
+local gui = Instance.new("ScreenGui")
+gui.Name          = "NotzHub_V18"
+gui.ResetOnSpawn  = false
+gui.DisplayOrder  = 999
+gui.Parent        = (gethui and gethui()) or game.CoreGui
+
+main = Instance.new("Frame", gui)
+main.Size             = UDim2.new(0, 165, 0, 0)
+main.Position         = savedPos
+main.BackgroundColor3 = BG_DEEP
+main.BorderSizePixel  = 0
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color       = RED
+mainStroke.Thickness   = 1
+mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+mainStroke.Transparency = 0.3
+
+local bgGrad = Instance.new("UIGradient", main)
+bgGrad.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0,   Color3.fromRGB(16, 12, 14)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(12, 12, 14)),
+    ColorSequenceKeypoint.new(1,   Color3.fromRGB(14, 11, 13)),
+}
+bgGrad.Rotation = 135
+
+local uiList = Instance.new("UIListLayout", main)
+uiList.Padding              = UDim.new(0, 0)
+uiList.SortOrder            = Enum.SortOrder.LayoutOrder
+uiList.HorizontalAlignment  = Enum.HorizontalAlignment.Center
+uiList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    main.Size = UDim2.new(0, 165, 0, uiList.AbsoluteContentSize.Y)
+end)
+
+task.spawn(function()
+    local t = 0
+    while main.Parent do
+        t = t + 0.05
+        local alpha = (math.sin(t * 1.5) + 1) * 0.5
+        mainStroke.Transparency = 0.25 + alpha * 0.2
+        task.wait(0.05)
+    end
+end)
+
+local function Div(order)
+    local d = Instance.new("Frame", main)
+    d.Size             = UDim2.new(0.85, 0, 0, 1)
+    d.BackgroundColor3 = Color3.fromRGB(30, 25, 28)
+    d.BackgroundTransparency = 0.4
+    d.BorderSizePixel  = 0
+    d.LayoutOrder      = order
+end
+
+local function Row(h, order)
+    local f = Instance.new("Frame", main)
+    f.Size             = UDim2.new(1, 0, 0, h)
+    f.BackgroundTransparency = 1
+    f.LayoutOrder      = order
+    return f
+end
+
+-- ════════════════════ HEADER ═════════════════════════════════
+local hdr = Row(42, 1)
+local accentBar = Instance.new("Frame", hdr)
+accentBar.Size = UDim2.new(0, 2, 0, 22)
+accentBar.Position = UDim2.new(0, 10, 0, 12)
+accentBar.BackgroundColor3 = RED
+accentBar.BorderSizePixel = 0
+accentBar.BackgroundTransparency = 0.2
+Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0, 2)
+
+local iconPill = Instance.new("Frame", hdr)
+iconPill.Size = UDim2.new(0, 26, 0, 26)
+iconPill.Position = UDim2.new(0, 18, 0, 10)
+iconPill.BackgroundColor3 = BG_ITEM
+iconPill.BorderSizePixel = 0
+Instance.new("UICorner", iconPill).CornerRadius = UDim.new(0, 8)
+local iconStroke = Instance.new("UIStroke", iconPill)
+iconStroke.Color = RED; iconStroke.Thickness = 1; iconStroke.Transparency = 0.5
+
+local iconImg = Instance.new("ImageLabel", iconPill)
+iconImg.Size = UDim2.new(1, 0, 1, 0)
+iconImg.BackgroundTransparency = 1
+iconImg.Image = "rbxassetid://100843959837393"
+iconImg.ScaleType = Enum.ScaleType.Fit
+
+local titleLbl = Instance.new("TextLabel", hdr)
+titleLbl.Size = UDim2.new(0, 80, 0, 16)
+titleLbl.Position = UDim2.new(0, 50, 0, 6)
+titleLbl.BackgroundTransparency = 1
+titleLbl.RichText = true
+titleLbl.Text = "<font color='rgb(220,220,225)'>NOTZ</font> <font color='rgb(185,50,50)'>HUB</font>"
+titleLbl.Font = BlackFont; titleLbl.TextSize = 11; titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local subLbl = Instance.new("TextLabel", hdr)
+subLbl.Size = UDim2.new(0, 80, 0, 12)
+subLbl.Position = UDim2.new(0, 50, 0, 22)
+subLbl.BackgroundTransparency = 1
+subLbl.Text = "Desync V18"
+subLbl.Font = Font; subLbl.TextSize = 8; subLbl.TextColor3 = GRAY_DIM; subLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local togglePill = Instance.new("TextButton", hdr)
+togglePill.Size = UDim2.new(0, 38, 0, 18)
+togglePill.Position = UDim2.new(1, -48, 0, 14)
+togglePill.BackgroundColor3 = Color3.fromRGB(15, 38, 28)
+togglePill.BorderSizePixel = 0
+togglePill.Text = "● ON"; togglePill.Font = BoldFont; togglePill.TextSize = 8
+togglePill.TextColor3 = GREEN_OK; togglePill.AutoButtonColor = false
+Instance.new("UICorner", togglePill).CornerRadius = UDim.new(1, 0)
+local tpStroke = Instance.new("UIStroke", togglePill)
+tpStroke.Color = GREEN_OK; tpStroke.Thickness = 1; tpStroke.Transparency = 0.45
+
+Div(2)
+
+-- ════════════════════ STATUS CARD ═══════════════════════════
+local statusWrap = Row(56, 3)
+local statusPad = Instance.new("UIPadding", statusWrap)
+statusPad.PaddingLeft = UDim.new(0, 10); statusPad.PaddingRight = UDim.new(0, 10)
+statusPad.PaddingTop = UDim.new(0, 7); statusPad.PaddingBottom = UDim.new(0, 7)
+
+local statusCard = Instance.new("Frame", statusWrap)
+statusCard.Size = UDim2.new(1, 0, 1, 0)
+statusCard.BackgroundColor3 = BG_CARD; statusCard.BorderSizePixel = 0
+Instance.new("UICorner", statusCard).CornerRadius = UDim.new(0, 8)
+local scStroke = Instance.new("UIStroke", statusCard)
+scStroke.Color = Color3.fromRGB(35, 25, 28); scStroke.Thickness = 1; scStroke.Transparency = 0.3
+
+local nextLbl = Instance.new("TextLabel", statusCard)
+nextLbl.Size = UDim2.new(0, 90, 0, 12)
+nextLbl.Position = UDim2.new(0, 10, 0, 6)
+nextLbl.BackgroundTransparency = 1
+nextLbl.Text = "NEXT ROLLBACK"; nextLbl.Font = BoldFont; nextLbl.TextSize = 7
+nextLbl.TextColor3 = GRAY_DIM; nextLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local statusText = Instance.new("TextLabel", statusCard)
+statusText.Size = UDim2.new(0.9, 0, 0, 22)
+statusText.Position = UDim2.new(0, 0, 0, 2)
+statusText.BackgroundTransparency = 1
+statusText.Text = "Waiting..."; statusText.Font = BlackFont; statusText.TextSize = 14
+statusText.TextColor3 = WHITE_COLOR; statusText.TextXAlignment = Enum.TextXAlignment.Right
+
+local progressBg = Instance.new("Frame", statusCard)
+progressBg.Size = UDim2.new(1, -20, 0, 3)
+progressBg.Position = UDim2.new(0, 10, 0, 28)
+progressBg.BackgroundColor3 = Color3.fromRGB(30, 22, 25)
+progressBg.BorderSizePixel = 0
+Instance.new("UICorner", progressBg).CornerRadius = UDim.new(1, 0)
+
+local progressFill = Instance.new("Frame", progressBg)
+progressFill.Size = UDim2.new(0, 0, 1, 0)
+progressFill.BackgroundColor3 = WHITE_COLOR; progressFill.BorderSizePixel = 0
+Instance.new("UICorner", progressFill).CornerRadius = UDim.new(1, 0)
+
+local serverPosLbl = Instance.new("TextLabel", statusCard)
+serverPosLbl.Size = UDim2.new(0, 70, 0, 10)
+serverPosLbl.Position = UDim2.new(0, 10, 0, 33)
+serverPosLbl.BackgroundTransparency = 1
+serverPosLbl.Text = "SERVER POS"; serverPosLbl.Font = Font; serverPosLbl.TextSize = 7
+serverPosLbl.TextColor3 = GRAY_DIM; serverPosLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local serverPosVal = Instance.new("TextLabel", statusCard)
+serverPosVal.Size = UDim2.new(0.9, 0, 0, 12)
+serverPosVal.Position = UDim2.new(0, 0, 0, 32)
+serverPosVal.BackgroundTransparency = 1
+serverPosVal.Text = "0.0 studs"; serverPosVal.Font = BoldFont; serverPosVal.TextSize = 8
+serverPosVal.TextColor3 = GREEN_OK; serverPosVal.TextXAlignment = Enum.TextXAlignment.Right
+
+Div(4)
+
+-- ════════════════════ INFO ROW ════════════════════════════════
+local infoRow = Row(20, 5)
+local infoLbl = Instance.new("TextLabel", infoRow)
+infoLbl.Size = UDim2.new(1, -20, 1, 0)
+infoLbl.Position = UDim2.new(0, 10, 0, 0)
+infoLbl.BackgroundTransparency = 1
+infoLbl.Text = "Auto-ativa ao segurar um brainrot"
+infoLbl.Font = Font; infoLbl.TextSize = 7; infoLbl.TextColor3 = GRAY_MID; infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+Div(6)
+
+-- ════════════════════ SLIDER DO TEMPO DE ROLLBACK ═════════════
+local cycleRow = Row(38, 7)
+local cyclePad = Instance.new("UIPadding", cycleRow)
+cyclePad.PaddingLeft = UDim.new(0, 10); cyclePad.PaddingRight = UDim.new(0, 10)
+cyclePad.PaddingTop = UDim.new(0, 4); cyclePad.PaddingBottom = UDim.new(0, 4)
+
+local cycleCard = Instance.new("Frame", cycleRow)
+cycleCard.Size = UDim2.new(1, 0, 1, 0)
+cycleCard.BackgroundColor3 = BG_CARD; cycleCard.BorderSizePixel = 0
+Instance.new("UICorner", cycleCard).CornerRadius = UDim.new(0, 8)
+local cyStroke = Instance.new("UIStroke", cycleCard)
+cyStroke.Color = Color3.fromRGB(35, 25, 28); cyStroke.Thickness = 1; cyStroke.Transparency = 0.3
+
+local cycleTitle = Instance.new("TextLabel", cycleCard)
+cycleTitle.Size = UDim2.new(1, -16, 0, 12)
+cycleTitle.Position = UDim2.new(0, 8, 0, 3)
+cycleTitle.BackgroundTransparency = 1
+cycleTitle.Text = "⏱ Rollback: " .. string.format("%.1fs", CYCLE_TIME)
+cycleTitle.Font = BoldFont; cycleTitle.TextSize = 8; cycleTitle.TextColor3 = GRAY_MID
+
+local cycleBg = Instance.new("Frame", cycleCard)
+cycleBg.Size = UDim2.new(1, -16, 0, 4)
+cycleBg.Position = UDim2.new(0, 8, 0, 18)
+cycleBg.BackgroundColor3 = Color3.fromRGB(30, 22, 25)
+cycleBg.BorderSizePixel = 0
+Instance.new("UICorner", cycleBg).CornerRadius = UDim.new(1, 0)
+
+local cycleFill = Instance.new("Frame", cycleBg)
+cycleFill.BackgroundColor3 = RED
+cycleFill.BorderSizePixel = 0
+Instance.new("UICorner", cycleFill).CornerRadius = UDim.new(1, 0)
+
+local cycleKnob = Instance.new("Frame", cycleBg)
+cycleKnob.Size = UDim2.new(0, 10, 0, 10)
+cycleKnob.BackgroundColor3 = WHITE_COLOR
+cycleKnob.BorderSizePixel = 0
+cycleKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+Instance.new("UICorner", cycleKnob).CornerRadius = UDim.new(1, 0)
+
+local MIN_CYCLE = 3
+local MAX_CYCLE = 8
+local function updateCycleSlider(val)
+    val = math.clamp(val, MIN_CYCLE, MAX_CYCLE)
+    CYCLE_TIME = val
+    SaveConfig()
+    cycleTitle.Text = "⏱ Rollback: " .. string.format("%.1fs", val)
+    local pct = (val - MIN_CYCLE) / (MAX_CYCLE - MIN_CYCLE)
+    cycleFill.Size = UDim2.new(pct, 0, 1, 0)
+    cycleKnob.Position = UDim2.new(pct, 0, 0.5, 0)
+end
+updateCycleSlider(CYCLE_TIME)
+
+local cyDragging = false
+cycleBg.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        cyDragging = true
+        updateCycleSlider(MIN_CYCLE + ((i.Position.X - cycleBg.AbsolutePosition.X) / cycleBg.AbsoluteSize.X) * (MAX_CYCLE - MIN_CYCLE))
+    end
+end)
+cycleKnob.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then cyDragging = true end
+end)
+UIS.InputEnded:Connect(function(i)
+    if (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then cyDragging = false end
+end)
+UIS.InputChanged:Connect(function(i)
+    if cyDragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        updateCycleSlider(MIN_CYCLE + ((i.Position.X - cycleBg.AbsolutePosition.X) / cycleBg.AbsoluteSize.X) * (MAX_CYCLE - MIN_CYCLE))
+    end
+end)
+
+Div(8)
+
+-- ════════════════════ MANUAL ROLLBACK ════════════════════════
+local manRow = Row(36, 9)
+local manPad = Instance.new("UIPadding", manRow)
+manPad.PaddingLeft = UDim.new(0, 10); manPad.PaddingRight = UDim.new(0, 10)
+manPad.PaddingTop = UDim.new(0, 5); manPad.PaddingBottom = UDim.new(0, 5)
+
+local manBtn = Instance.new("TextButton", manRow)
+manBtn.Size = UDim2.new(1, 0, 1, 0)
+manBtn.BackgroundColor3 = Color3.fromRGB(25, 15, 18)
+manBtn.BorderSizePixel = 0; manBtn.AutoButtonColor = false
+manBtn.Font = BoldFont; manBtn.TextSize = 9; manBtn.TextColor3 = RED_BRIGHT
+Instance.new("UICorner", manBtn).CornerRadius = UDim.new(0, 8)
+local manStroke = Instance.new("UIStroke", manBtn)
+manStroke.Color = RED; manStroke.Thickness = 1; manStroke.Transparency = 0.4
+
+local function updateManBtnText()
+    manBtn.Text = isMobile and "◄◄  MANUAL ROLLBACK  [TAP]" or ("◄◄  MANUAL ROLLBACK  [" .. rollbackKey.Name .. "]")
+end
+updateManBtnText()
+
+manBtn.MouseEnter:Connect(function()
+    TweenSvc:Create(manBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {BackgroundColor3 = Color3.fromRGB(38, 20, 24)}):Play()
+end)
+manBtn.MouseLeave:Connect(function()
+    TweenSvc:Create(manBtn, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {BackgroundColor3 = Color3.fromRGB(25, 15, 18)}):Play()
+end)
+
+-- ════════════════════ MUDAR TECLA ════════════════════════════
+local bindBtn
+if not isMobile then
+    Div(10)
+    local bindRow = Row(28, 11)
+    local bindPad = Instance.new("UIPadding", bindRow)
+    bindPad.PaddingLeft = UDim.new(0, 10); bindPad.PaddingRight = UDim.new(0, 10)
+    bindPad.PaddingTop = UDim.new(0, 4); bindPad.PaddingBottom = UDim.new(0, 4)
+    bindBtn = Instance.new("TextButton", bindRow)
+    bindBtn.Size = UDim2.new(1, 0, 1, 0)
+    bindBtn.BackgroundColor3 = BG_ITEM; bindBtn.BorderSizePixel = 0; bindBtn.AutoButtonColor = false
+    bindBtn.Text = "MUDAR TECLA DO ROLLBACK"; bindBtn.Font = Font; bindBtn.TextSize = 7
+    bindBtn.TextColor3 = GRAY_MID
+    Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 6)
+    local bindStroke = Instance.new("UIStroke", bindBtn)
+    bindStroke.Color = Color3.fromRGB(35, 35, 40); bindStroke.Thickness = 1; bindStroke.Transparency = 0.5
+end
+
+-- ════════════════════ DISCORD ════════════════════════════════
+Div(14)
+    Row(4, 14.5)
+local DISCORD_LINK = "discord.gg/notzhub"
+
+local discordRow = Row(26, 15)
+discordRow.BackgroundColor3 = Color3.fromRGB(14, 12, 14)
+discordRow.BorderSizePixel  = 0
+local drStroke = Instance.new("UIStroke", discordRow)
+drStroke.Color = Color3.fromRGB(35, 25, 28); drStroke.Thickness = 1; drStroke.Transparency = 0.6
+
+local discordDot = Instance.new("Frame", discordRow)
+discordDot.Size             = UDim2.new(0, 5, 0, 5)
+discordDot.Position         = UDim2.new(0, 8, 0.5, -3)
+discordDot.BackgroundColor3 = GREEN_OK
+discordDot.BorderSizePixel  = 0
+Instance.new("UICorner", discordDot).CornerRadius = UDim.new(1, 0)
+
+local discordLbl = Instance.new("TextLabel", discordRow)
+discordLbl.Size              = UDim2.new(1, -60, 1, 0)
+discordLbl.Position          = UDim2.new(0, 18, 0, 0)
+discordLbl.BackgroundTransparency = 1
+discordLbl.Text              = DISCORD_LINK
+discordLbl.Font              = BoldFont
+discordLbl.TextSize          = 8
+discordLbl.TextColor3        = Color3.fromRGB(200, 200, 205)
+discordLbl.TextXAlignment    = Enum.TextXAlignment.Left
+
+local copyBtn = Instance.new("TextButton", discordRow)
+copyBtn.Size             = UDim2.new(0, 34, 0, 16)
+copyBtn.Position         = UDim2.new(1, -42, 0.5, -8)
+copyBtn.BackgroundColor3 = RED
+copyBtn.BorderSizePixel  = 0
+copyBtn.AutoButtonColor  = false
+copyBtn.Text             = "COPY"
+copyBtn.Font             = BoldFont
+copyBtn.TextSize         = 7
+copyBtn.TextColor3       = Color3.new(1, 1, 1)
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
+local copyStroke = Instance.new("UIStroke", copyBtn)
+copyStroke.Color = RED_BRIGHT; copyStroke.Thickness = 1; copyStroke.Transparency = 0.5
+
+-- Hover do botão
+copyBtn.MouseEnter:Connect(function()
+    TweenSvc:Create(copyBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {BackgroundColor3 = RED_BRIGHT}):Play()
+end)
+copyBtn.MouseLeave:Connect(function()
+    TweenSvc:Create(copyBtn, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {BackgroundColor3 = RED}):Play()
+end)
+
+-- Click: copia e mostra feedback 3s
+copyBtn.MouseButton1Click:Connect(function()
+    pcall(function() setclipboard(DISCORD_LINK) end)
+    copyBtn.Text             = "✓"
+    copyBtn.BackgroundColor3 = GREEN_OK
+    copyStroke.Color         = GREEN_OK
+    discordDot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    task.delay(3, function()
+        if copyBtn and copyBtn.Parent then
+            copyBtn.Text             = "COPY"
+            copyBtn.BackgroundColor3 = RED
+            copyStroke.Color         = RED_BRIGHT
+            discordDot.BackgroundColor3 = GREEN_OK
+        end
+    end)
+end)
+
+-- ════════════════════ CRÉDITOS ════════════════════════════════
+Div(16)
+local credRow = Row(14, 17)
+local credLbl = Instance.new("TextLabel", credRow)
+credLbl.Size = UDim2.new(1, 0, 1, 0)
+credLbl.BackgroundTransparency = 1
+credLbl.Text = "NOTZ HUB  ·  desync v18"; credLbl.Font = Font; credLbl.TextSize = 7
+credLbl.TextColor3 = Color3.fromRGB(38, 28, 32); credLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+-- ════════════════════════════════════════════
+--  BOTÕES
+-- ════════════════════════════════════════════
+local function updateTogglePill()
+    if State.enabled then
+        togglePill.Text = "● ON"; togglePill.TextColor3 = GREEN_OK
+        togglePill.BackgroundColor3 = Color3.fromRGB(15, 38, 28); tpStroke.Color = GREEN_OK
+    else
+        togglePill.Text = "● OFF"; togglePill.TextColor3 = RED_BRIGHT
+        togglePill.BackgroundColor3 = Color3.fromRGB(35, 15, 18); tpStroke.Color = RED
+    end
+end
+
+togglePill.MouseButton1Click:Connect(function()
+    State.enabled = not State.enabled
+    if not State.enabled then deactivateDesync(); State.isDelaying = false end
+    updateTogglePill()
+end)
+manBtn.MouseButton1Click:Connect(SafeRollback)
+
+if bindBtn then
+    bindBtn.MouseButton1Click:Connect(function()
+        if bindingMode then return end
+        bindingMode = true; bindBtn.Text = "PRESSIONE UMA TECLA..."; bindBtn.TextColor3 = Color3.fromRGB(255, 200, 50)
+    end)
+end
+
+-- ════════════════════════════════════════════
+--  INPUT
+-- ════════════════════════════════════════════
+UIS.InputBegan:Connect(function(input, gpe)
+    if bindingMode then
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            rollbackKey = input.KeyCode; bindingMode = false; updateManBtnText()
+            if bindBtn then bindBtn.Text = "MUDAR TECLA DO ROLLBACK"; bindBtn.TextColor3 = GRAY_MID end
+            SaveConfig()
+        end
+        return
+    end
+    if not isMobile and not gpe and input.KeyCode == rollbackKey then SafeRollback() end
+end)
+
+-- ════════════════════════════════════════════
+--  CÍRCULO VERMELHO NO CHÃO (DISCO GROSSO)
+-- ════════════════════════════════════════════
+local fakePosCircle = Instance.new("Part")
+fakePosCircle.Name = "NotzHub_FakePos"
+fakePosCircle.Shape = Enum.PartType.Cylinder
+fakePosCircle.Size = Vector3.new(0.18, 7, 7)   -- bem flat, deitado no chão
+fakePosCircle.Anchored = true
+fakePosCircle.CanCollide = false
+fakePosCircle.CanTouch = false
+fakePosCircle.CanQuery = false
+fakePosCircle.CastShadow = false
+fakePosCircle.Color = Color3.fromRGB(185, 50, 50)
+fakePosCircle.Material = Enum.Material.Neon
+fakePosCircle.Transparency = 0.45
+fakePosCircle.Parent = Workspace
+
+-- Highlight vermelho
+local circleHighlight = Instance.new("Highlight", fakePosCircle)
+circleHighlight.FillColor = Color3.fromRGB(185, 50, 50)
+circleHighlight.OutlineColor = Color3.fromRGB(215, 80, 80)
+circleHighlight.FillTransparency = 0.55
+circleHighlight.OutlineTransparency = 0.2
+circleHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+
+-- ════════════════════════════════════════════
+--  BILLBOARD "SERVER POS" ACIMA DO CÍRCULO
+-- ════════════════════════════════════════════
+local spBillGui   = nil
+local spBillVal   = nil
+
+local function createServerPosBillboard(hrp)
+    if spBillGui and spBillGui.Parent then spBillGui:Destroy() end
+
+    spBillGui = Instance.new("BillboardGui")
+    spBillGui.Name             = "NotzHub_ServerPosBill"
+    spBillGui.ResetOnSpawn     = false
+    spBillGui.AlwaysOnTop      = true
+    spBillGui.LightInfluence   = 0
+    spBillGui.Size             = UDim2.new(0, 120, 0, 42)
+    spBillGui.StudsOffset      = Vector3.new(0, 4, 0)
+    spBillGui.Adornee          = hrp
+    spBillGui.Parent           = hrp
+    spBillGui.Enabled          = false
+
+    local frame = Instance.new("Frame", spBillGui)
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 20, 35)
+    frame.BackgroundTransparency = 0.15
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(55, 140, 180); stroke.Thickness = 1; stroke.Transparency = 0.3
+
+    local label = Instance.new("TextLabel", frame)
+    label.Size = UDim2.new(1, -8, 0, 14); label.Position = UDim2.new(0, 4, 0, 3)
+    label.BackgroundTransparency = 1; label.Text = "SERVER POS"
+    label.Font = Enum.Font.GothamBlack; label.TextSize = 8; label.TextColor3 = Color3.fromRGB(100, 185, 220)
+
+    spBillVal = Instance.new("TextLabel", frame)
+    spBillVal.Size = UDim2.new(1, -8, 0, 18); spBillVal.Position = UDim2.new(0, 4, 0, 16)
+    spBillVal.BackgroundTransparency = 1; spBillVal.Text = "0.0 studs"
+    spBillVal.Font = Enum.Font.GothamBlack; spBillVal.TextSize = 14; spBillVal.TextColor3 = Color3.fromRGB(255,255,255)
+
+    return spBillGui
+end
+
+lp.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if hrp then createServerPosBillboard(hrp) end
+end)
+
+task.spawn(function()
+    lp:WaitForChild("PlayerGui")
+    local char = lp.Character or lp.CharacterAdded:Wait()
+    local hrp  = char:WaitForChild("HumanoidRootPart", 10)
+    if hrp then createServerPosBillboard(hrp) end
+end)
+
+-- ════════════════════════════════════════════
+--  UPDATE LOOP
+-- ════════════════════════════════════════════
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        local char = lp.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local isStealing = lp:GetAttribute("Stealing") == true
+
+        if hrp then
+            if isStealing and fakeServerPos then
+                -- CFrame com rotação: cilindro deitado no chão (eixo X = altura do cilindro)
+                fakePosCircle.CFrame = CFrame.new(
+                    fakeServerPos.X,
+                    fakeServerPos.Y - 2.8,   -- rente ao chão
+                    fakeServerPos.Z
+                ) * CFrame.Angles(0, 0, math.rad(90))  -- deita o cilindro
+                fakePosCircle.Transparency = 0.3
+
+                local dist = (hrp.Position - fakeServerPos).Magnitude
+
+                if spBillGui and spBillGui.Parent then
+                    spBillGui.Adornee = fakePosCircle
+                    spBillGui.Enabled = true
+                    spBillVal.Text = string.format("%.1f studs", dist)
+                    if dist > 10 then spBillVal.TextColor3 = Color3.fromRGB(255, 65, 65)
+                    elseif dist > 5 then spBillVal.TextColor3 = Color3.fromRGB(255, 200, 50)
+                    else spBillVal.TextColor3 = Color3.fromRGB(255, 255, 255) end
+                end
+
+                serverPosVal.Text = string.format("%.1f studs", dist)
+                serverPosVal.TextColor3 = dist > 10 and RED_BRIGHT or dist > 5 and Color3.fromRGB(255, 200, 0) or GREEN_OK
+            else
+                fakePosCircle.Transparency = 1
+                if spBillGui and spBillGui.Parent then spBillGui.Enabled = false end
+                serverPosVal.Text = "0.0 studs"
+                serverPosVal.TextColor3 = GREEN_OK
+            end
+        end
+    end
+end)
+
+-- ════════════════════════════════════════════
+--  LOOP PRINCIPAL
+-- ════════════════════════════════════════════
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        local isStealing = lp:GetAttribute("Stealing") == true
+
+        if isStealing and not State.isDelaying and State.enabled then
+            State.isDelaying = true
+            activateDesync()
+
+            -- Salva snapshot da posição ANTES de qualquer wait
+            local char = lp.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                fakeServerPos   = hrp.Position
+                safePosSnapshot = hrp.Position
+                safeCFSnapshot  = hrp.CFrame
+            end
+
+            -- 1 único rollback, sem delay para evitar double-trigger
+            SafeRollback()
+            -- Mantém desync ativo (SafeRollback pausa e restaura internamente)
+
+            -- Timer visual apenas — SEM rollback adicional ao fim
+            State.timer = CYCLE_TIME
+            while State.timer > 0 and lp:GetAttribute("Stealing") == true and State.enabled do
+                statusText.Text = string.format("%.1fs", State.timer)
+                local pct = math.clamp(1 - (State.timer / CYCLE_TIME), 0, 1)
+                progressFill.Size = UDim2.new(pct, 0, 1, 0)
+                if State.timer <= 2.0 then
+                    statusText.TextColor3 = RED_BRIGHT; progressFill.BackgroundColor3 = RED
+                else
+                    statusText.TextColor3 = WHITE_COLOR; progressFill.BackgroundColor3 = WHITE_COLOR
+                end
+                statusText.Visible = true
+                task.wait(0.05)
+                State.timer = math.max(0, State.timer - 0.05)
+            end
+
+            progressFill.Size = UDim2.new(0, 0, 1, 0); progressFill.BackgroundColor3 = WHITE_COLOR
+            State.isDelaying = false
+
+        elseif not isStealing or not State.enabled then
+            if State.desync then deactivateDesync() end
+            State.isDelaying = false; statusText.Visible = true; statusText.TextSize = 14
+            statusText.Text = State.enabled and "Waiting..." or "DISABLED"
+            statusText.TextColor3 = State.enabled and GRAY_MID or RED_BRIGHT
+            progressFill.Size = UDim2.new(0, 0, 1, 0)
+            fakeServerPos = nil
+        end
+    end
+end)
+
+-- AUTO-ROLLBACK AO PEGAR ITEM: removido — causava rollbacks extras durante o roubo
+
+-- ════════════════════════════════════════════
+--  DRAG
+-- ════════════════════════════════════════════
+local dragging, dragStart, startPos2
+main.Active = true
+main.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        local pos = i.Position
+        local cyAbs = cycleBg.AbsolutePosition
+        local cySize = cycleBg.AbsoluteSize
+        if pos.X >= cyAbs.X and pos.X <= cyAbs.X + cySize.X
+           and pos.Y >= cyAbs.Y and pos.Y <= cyAbs.Y + cySize.Y then
+            return
+        end
+        dragging = true; dragStart = pos; startPos2 = main.Position
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        local d = i.Position - dragStart
+        main.Position = UDim2.new(startPos2.X.Scale, startPos2.X.Offset + d.X, startPos2.Y.Scale, startPos2.Y.Offset + d.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(i)
+    if (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) and dragging then
+        dragging = false; SaveConfig()
+    end
+end)
+
+print("[Notz Hub V18] Desync carregado - Behind Rollback + Disco no chão")
